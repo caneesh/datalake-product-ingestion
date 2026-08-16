@@ -61,7 +61,8 @@ object BluepcssPMMPlusConsumer extends AppTrait {
       // supplied via --conf "spark.driver.extraJavaOptions=..." on spark-submit.
       // Falls back to the hardcoded local defaults when the property is absent.
       val effectiveDebugMode     = sys.props.get("bluepcs.debug.mode").map(_.toBoolean).getOrElse(debugMode)
-      val effectiveSkipHiveWrite = sys.props.get("bluepcs.debug.skipHiveWrite").map(_.toBoolean).getOrElse(debugMode && skipHiveWrite)
+      // FIX: Use effectiveDebugMode (not debugMode) so -Dbluepcs.debug.mode=false also disables skipHiveWrite
+      val effectiveSkipHiveWrite = sys.props.get("bluepcs.debug.skipHiveWrite").map(_.toBoolean).getOrElse(effectiveDebugMode && skipHiveWrite)
 
       // Publish resolved values via Spark conf so downstream components
       // (BluepcssPMMPlusProcessor, LoadHiveTable) can read them without needing
