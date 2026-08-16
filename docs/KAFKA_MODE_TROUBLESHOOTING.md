@@ -1,4 +1,12 @@
-# Kafka Mode Troubleshooting Guide
+# Bluepcs Ingestion Troubleshooting Guide
+
+## Table of Contents
+- [Kafka Mode Issues](#kafka-mode-issues)
+- [HDFS Mode Issues](#hdfs-mode-issues)
+
+---
+
+# Kafka Mode Issues
 
 ## Common Issues and Fixes
 
@@ -92,4 +100,92 @@ To truncate (start fresh):
 ```bash
 hbase shell
 truncate 'product_bluepcs_stream_kafka_offsets'
+```
+
+---
+
+# HDFS Mode Issues
+
+## Issue 1: HDFS file processing is very slow
+
+**Symptom:** Files take a long time to process, one file at a time.
+
+**Cause:** Default sequential processing mode processes files one at a time on the driver.
+
+**Fix:** Enable batch processing mode in config:
+
+```properties
+hdfs_batch_processing=true
+hdfs_parallel_file_claims=4
+hdfs_max_files_per_poll=20
+```
+
+Or in HdfsPollingConfig:
+```scala
+HdfsPollingConfig(
+  ...
+  batchProcessing = true,      // Process multiple files in single Spark job
+  parallelFileClaims = 4,      // Parallel threads for file claiming
+  maxFilesPerPoll = 20         // Files per batch
+)
+```
+
+**Performance comparison:**
+| Mode | 100 files | Notes |
+|------|-----------|-------|
+| Sequential | ~10 min | 1 Spark job per file |
+| Batch | ~1 min | 1 Spark job per batch |
+
+## Issue 2: Files stuck in processing directory
+
+**Symptom:** Files remain in processing directory after restart.
+
+**Cause:** Application crashed before archiving completed files.
+
+**Fix:** Enable stranded file recovery:
+
+```properties
+hdfs_recover_stranded=true
+```
+
+This moves stranded files back to incoming on startup.
+
+## Issue 3: Large files cause OOM
+
+**Symptom:** OutOfMemoryError when processing large files.
+
+**Cause:** File exceeds max file size or too many files in batch.
+
+**Fix:** Adjust limits:
+
+```properties
+hdfs_max_file_size_bytes=104857600    # 100MB max per file
+hdfs_max_files_per_poll=10            # Reduce batch size
+```
+
+## HDFS Mode Configuration Reference
+
+| Property | Description | Default |
+|----------|-------------|---------|
+| `hdfs_incoming_dir` | Directory to poll for new files | required |
+| `hdfs_processing_dir` | Working directory for files being processed | required |
+| `hdfs_archive_dir` | Directory for successfully processed files | required |
+| `hdfs_error_dir` | Directory for failed files | required |
+| `hdfs_poll_interval_ms` | Polling interval in milliseconds | 30000 |
+| `hdfs_max_files_per_poll` | Max files per poll cycle | 10 |
+| `hdfs_file_extension` | File extension to look for | .json |
+| `hdfs_file_stability_ms` | Wait time before processing new file | 5000 |
+| `hdfs_recover_stranded` | Recover files stuck in processing | true |
+| `hdfs_max_file_size_bytes` | Max file size in bytes | 104857600 |
+
+## HDFS Directory Structure
+
+```
+/incoming/raw/product/bluepcs/
+├── incoming/          <- New files land here
+├── processing/        <- Files being processed
+├── archive/           <- Successfully processed (by date)
+│   ├── 20260816/
+│   └── 20260817/
+└── error/             <- Failed files with .error reason
 ```
