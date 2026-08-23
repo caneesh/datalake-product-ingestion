@@ -133,7 +133,7 @@ class HdfsFilePoller(
    * BATCH PROCESSING MODE (Recommended - Most Efficient)
    *
    * 1. Claim multiple files in parallel using thread pool
-   * 2. Read all claimed files into memory
+   * 2. Read all claimed files in parallel using thread pool
    * 3. Process entire batch as single Spark job (like Kafka mode)
    * 4. Archive successful files, move failed to error dir
    */
@@ -151,20 +151,39 @@ class HdfsFilePoller(
 
     logger.info("Successfully claimed {} files for batch processing", claimedFiles.size)
 
-    // Step 2: Read all files and build batch payload
-    val batchPayload = ArrayBuffer[(Path, String, Long)]() // (processingPath, content, claimedAt)
-    val failedReads = ArrayBuffer[Path]()
+    // Step 2: Read all files in parallel using thread pool
+    val readFutures = claimedFiles.map { case (processingPath, claimedAt) =>
+      claimingPool.submit(new Callable[Either[Path, (Path, String, Long)]] {
+        override def call(): Either[Path, (Path, String, Long)] = {
+          try {
+            val content = readWholeFile(processingPath)
+            Right((processingPath, content, claimedAt))
+          } catch {
+            case ex: Exception =>
+              logger.error(s"Failed to read file [$processingPath]. Will move to error directory.", ex)
+              Left(processingPath)
+          }
+        }
+      })
+    }
 
-    claimedFiles.foreach { case (processingPath, claimedAt) =>
+    // Collect results from parallel reads
+    val readResults = readFutures.map { future =>
       try {
-        val content = readWholeFile(processingPath)
-        batchPayload += ((processingPath, content, claimedAt))
+        future.get(120, TimeUnit.SECONDS)
       } catch {
         case ex: Exception =>
-          logger.error(s"Failed to read file [$processingPath]. Moving to error directory.", ex)
-          failedReads += processingPath
-          moveToErrorDir(processingPath, s"Read failed: ${ex.getMessage}")
+          logger.error("Timeout or error waiting for file read", ex)
+          Left(new Path("/unknown"))
       }
+    }
+
+    val batchPayload = readResults.collect { case Right(payload) => payload }
+    val failedReads = readResults.collect { case Left(path) => path }.filter(_.getName != "unknown")
+
+    // Move failed reads to error directory
+    failedReads.foreach { path =>
+      moveToErrorDir(path, "Read failed or timed out")
     }
 
     if (batchPayload.isEmpty) {
@@ -172,7 +191,7 @@ class HdfsFilePoller(
       return
     }
 
-    logger.info("Read {} files successfully, {} failed", batchPayload.size, failedReads.size)
+    logger.info("Read {} files successfully in parallel, {} failed", batchPayload.size: Integer, failedReads.size: Integer)
 
     // Step 3: Process batch through Spark
     val successfulFiles = ArrayBuffer[Path]()
