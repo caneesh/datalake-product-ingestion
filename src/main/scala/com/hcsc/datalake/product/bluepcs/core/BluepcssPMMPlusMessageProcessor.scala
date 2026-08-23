@@ -124,6 +124,7 @@ class BluepcssPMMPlusMessageProcessor(
    */
   private def createEmptyOffsetDF(): DataFrame = {
     import spark.implicits._
-    Seq.empty[(String, Int, Int)].toDF("RowTag", "Partition", "Offset")
+    // Column order must match: (Partition, Offset, RowTag) - same as HBase offset table schema
+    Seq.empty[(Int, Int, String)].toDF("Partition", "Offset", "RowTag")
   }
 }
