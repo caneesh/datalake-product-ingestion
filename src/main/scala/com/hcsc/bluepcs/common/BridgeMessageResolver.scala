@@ -1,6 +1,11 @@
 package com.hcsc.bluepcs.common
 
-import ...
+import org.apache.hadoop.fs.{FileSystem, Path}
+import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
+import org.slf4j.LoggerFactory
+import java.io.FileNotFoundException
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
 object BridgeMessageResolver extends Serializable {
 
