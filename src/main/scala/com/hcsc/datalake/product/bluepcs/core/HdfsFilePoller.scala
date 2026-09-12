@@ -515,44 +515,4 @@ case class HdfsInputMessage(
   claimedAt: Long
 )
 
-class FileLifecycleManager(fs: FileSystem, config: HdfsPollingConfig) {
-
-  private val logger = LoggerFactory.getLogger(getClass)
-
-  def writeMarker(file: Path, markerSuffix: String, content: String): Unit = {
-    val markerPath = new Path(file.getParent, file.getName + markerSuffix)
-    val out = fs.create(markerPath, true)
-    try {
-      out.writeBytes(content)
-    } finally {
-      out.close()
-    }
-  }
-
-  def archiveFile(processingFile: Path, archiveDir: String): Path = {
-    val timestamp = new java.text.SimpleDateFormat("yyyyMMdd").format(new java.util.Date())
-    val dailyArchiveDir = new Path(archiveDir, timestamp)
-
-    if (!fs.exists(dailyArchiveDir)) {
-      fs.mkdirs(dailyArchiveDir)
-    }
-
-    val archivePath = new Path(dailyArchiveDir, processingFile.getName)
-    fs.rename(processingFile, archivePath)
-
-    // Clean up markers
-    Seq(FileLifecycleManager.STARTED_MARKER, FileLifecycleManager.COMPLETED_MARKER).foreach { suffix =>
-      val markerPath = new Path(processingFile.getParent, processingFile.getName + suffix)
-      if (fs.exists(markerPath)) {
-        fs.delete(markerPath, false)
-      }
-    }
-
-    archivePath
-  }
-}
-
-object FileLifecycleManager {
-  val STARTED_MARKER = ".started"
-  val COMPLETED_MARKER = ".completed"
-}
+// FileLifecycleManager is defined in FileLifecycleManager.scala
