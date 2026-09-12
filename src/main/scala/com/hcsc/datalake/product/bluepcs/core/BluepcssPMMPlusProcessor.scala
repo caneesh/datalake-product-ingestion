@@ -5,6 +5,10 @@ import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.concurrent.duration._
 import scala.util.{Failure, Success, Try}
 import org.slf4j.MDC
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.{DataFrame, Row, SaveMode}
+import org.apache.spark.sql.functions.col
+import com.typesafe.config.Config
 
 object BluepcssPMMPlusProcessor extends AppTrait with BluepcssTrait {
   import spark.sqlContext.implicits._

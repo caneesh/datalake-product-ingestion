@@ -1,5 +1,11 @@
 package com.hcsc.datalake.product.bluepcs.core
 
+import scala.util.{Try, Success, Failure}
+import org.apache.hadoop.fs.FileSystem
+import com.typesafe.config.Config
+import java.text.SimpleDateFormat
+import java.util.Calendar
+
 object BluepcssPMMPlusConsumer extends AppTrait {
   import spark.sqlContext.implicits._
 
