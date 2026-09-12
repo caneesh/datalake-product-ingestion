@@ -2,9 +2,15 @@ package com.hcsc.datalake.product.bluepcs.core
 
 import scala.util.{Try, Success, Failure}
 import org.apache.hadoop.fs.FileSystem
+import org.apache.hadoop.conf.Configuration
 import com.typesafe.config.Config
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import org.apache.spark.streaming.{Seconds, StreamingContext}
+import org.apache.spark.streaming.kafka010.{ConsumerStrategies, KafkaUtils, LocationStrategies}
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.hcsc.datalake.product.bluepcs.common.{AppTrait, HbaseOffsetManagement}
+import com.hcsc.bluepcs.common.BridgeMessageResolver
 
 object BluepcssPMMPlusConsumer extends AppTrait {
   import spark.sqlContext.implicits._
@@ -103,8 +109,7 @@ object BluepcssPMMPlusConsumer extends AppTrait {
     } match {
       case Success(k) => logger.info("@@@ Execution is success" + k)
       case Failure(e) =>
-        logger.error("@@@ Error in consumer " + e.toString)
-        logger.error(e.printStackTrace())
+        logger.error("@@@ Error in consumer " + e.toString, e)
         System.exit(1)
 
     }

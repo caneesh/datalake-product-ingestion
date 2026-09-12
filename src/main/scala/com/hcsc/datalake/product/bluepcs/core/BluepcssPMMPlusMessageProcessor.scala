@@ -4,6 +4,7 @@ import com.typesafe.config.Config
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.DataFrame
 import org.slf4j.{LoggerFactory, MDC}
+import com.hcsc.datalake.product.bluepcs.common.AppTrait
 
 /**
  * Message processor that bridges HDFS file input to the existing
@@ -17,7 +18,7 @@ class BluepcssPMMPlusMessageProcessor(
   env: String
 ) extends AppTrait {
 
-  private val logger = LoggerFactory.getLogger(getClass)
+  // Uses logger from AppTrait
 
   /**
    * Process a single message (file content).

@@ -7,6 +7,7 @@ import org.apache.spark.rdd.RDD
 import com.typesafe.config.Config
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import com.hcsc.datalake.product.bluepcs.common.{AppTrait, BluepcssTrait, ConfigLogger, DataFrameResourceManager, StagedSqlFlowRegistry}
 
 object BluepcssPMMPlusLoader extends AppTrait with BluepcssTrait {
 

@@ -191,7 +191,7 @@ class HdfsFilePoller(
       return
     }
 
-    logger.info("Read {} files successfully in parallel, {} failed", batchPayload.size: Integer, failedReads.size: Integer)
+    logger.info(s"Read ${batchPayload.size} files successfully in parallel, ${failedReads.size} failed")
 
     // Step 3: Process batch through Spark
     val successfulFiles = ArrayBuffer[Path]()
@@ -350,7 +350,7 @@ class HdfsFilePoller(
           }
 
           val elapsed = System.currentTimeMillis() - startTs
-          logger.info("Successfully processed file [{}] in {}ms", processingFile, elapsed: java.lang.Long)
+          logger.info(s"Successfully processed file [$processingFile] in ${elapsed}ms")
 
         } catch {
           case ex: Exception =>
@@ -441,7 +441,7 @@ class HdfsFilePoller(
             val incomingPath = new Path(pollingConfig.incomingDir, status.getPath.getName)
             try {
               fs.rename(status.getPath, incomingPath)
-              logger.info("Recovered stranded file: {} -> {}", status.getPath, incomingPath)
+              logger.info(s"Recovered stranded file: ${status.getPath} -> $incomingPath")
             } catch {
               case ex: Exception =>
                 logger.error(s"Failed to recover stranded file [${status.getPath}]", ex)

@@ -9,6 +9,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Row, SaveMode}
 import org.apache.spark.sql.functions.col
 import com.typesafe.config.Config
+import com.hcsc.datalake.product.bluepcs.common.{AppTrait, BluepcssTrait, HbaseOffsetManagement}
 
 object BluepcssPMMPlusProcessor extends AppTrait with BluepcssTrait {
   import spark.sqlContext.implicits._
@@ -116,7 +117,7 @@ object BluepcssPMMPlusProcessor extends AppTrait with BluepcssTrait {
         hdfsCycleId,
         hdfsFileName,
         hdfsFileSizeBytes,
-        elapsedMsSince(sparkProcessingStartNs): java.lang.Long
+        elapsedMsSince(sparkProcessingStartMs): java.lang.Long
       )
     }
   }
