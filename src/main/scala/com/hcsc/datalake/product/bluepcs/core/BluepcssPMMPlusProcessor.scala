@@ -1,6 +1,9 @@
 package com.hcsc.datalake.product.bluepcs.core
 
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{Executors, TimeUnit}
+import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.concurrent.duration._
+import scala.util.{Failure, Success, Try}
 import org.slf4j.MDC
 
 object BluepcssPMMPlusProcessor extends AppTrait with BluepcssTrait {
@@ -9,6 +12,13 @@ object BluepcssPMMPlusProcessor extends AppTrait with BluepcssTrait {
   // Source type constants
   val SOURCE_KAFKA = "kafka"
   val SOURCE_HDFS = "hdfs"
+
+  // Thread pool for parallel tag processing
+  private lazy val tagProcessingPool = Executors.newFixedThreadPool(
+    Runtime.getRuntime.availableProcessors().min(8)
+  )
+  private implicit lazy val tagProcessingEC: ExecutionContext =
+    ExecutionContext.fromExecutor(tagProcessingPool)
 
   def processJSONMessages(
     common_conf: Config,
@@ -111,53 +121,112 @@ object BluepcssPMMPlusProcessor extends AppTrait with BluepcssTrait {
 
     val debugMode = spark.conf.get("spark.bluepcs.debug.mode", "false").toBoolean
     val isHdfsSource = sourceType == SOURCE_HDFS
+    val parallelTagProcessing = spark.conf.get("spark.bluepcs.parallel.tags", "false").toBoolean
 
-    jsonTags.foreach(tag => {
-      logger.info("@@@ Processing tag: " + tag)
+    if (parallelTagProcessing && jsonTags.length > 1) {
+      logger.info(s"@@@ Processing ${jsonTags.length} tags in PARALLEL for layer=$layer")
+      processTagsInParallel(common_conf, bluepcs_conf, kafkaDF, OffsetDetailsDF, jsonTags, layer, env, sourceType, debugMode, isHdfsSource)
+    } else {
+      logger.info(s"@@@ Processing ${jsonTags.length} tags SEQUENTIALLY for layer=$layer")
+      jsonTags.foreach(tag => processTag(common_conf, bluepcs_conf, kafkaDF, OffsetDetailsDF, tag, layer, env, sourceType, debugMode, isHdfsSource))
+    }
+  }
 
-      val kafkaFilteredDF = if (!OffsetDetailsDF.rdd.isEmpty()) {
-        logger.info("@@@ kafkaOffsetDetailsDF is not empty, filtering Kafka data")
-        val kafkaFilteredDF = kafkaDF.join(OffsetDetailsDF, (kafkaDF.col("Partition") === OffsetDetailsDF.col("Partition"))
-          && (kafkaDF.col("Offset") > OffsetDetailsDF.col("Offset")) && (OffsetDetailsDF.col("RowTag") === tag), "inner")
-          .select(kafkaDF("Partition"), kafkaDF("Offset"), kafkaDF("JSONData"))
-        kafkaFilteredDF
-      } else {
-        logger.info("@@@ kafkaOffsetDetailsDF is empty, select full Kafka data")
-        kafkaDF
-      }
-
-      if (!kafkaFilteredDF.rdd.isEmpty()) {
-        val jsonRDD = kafkaFilteredDF.rdd.map { case x: Row => x(2).asInstanceOf[String] }
-
-        //Can try to make this dynamic in future
-        if (layer == "RAW_CURPIT") {
-          logger.info("@@@ Calling runBluepcsJsonToRawCur")
-          BluepcssPMMPlusLoader.runBluepcsJsonToRawCur(common_conf, bluepcs_conf, tag, jsonRDD, env)
-
-          if (isHdfsSource) {
-            logger.info(s"@@@ HDFS MODE: skipping updateKafkaOffsetDetails for tag=$tag, layer=$layer (HDFS uses file lifecycle for idempotency)")
-          } else if (debugMode) {
-            logger.info(s"@@@ DEBUG MODE: skipping updateKafkaOffsetDetails for tag=$tag, layer=$layer")
-          } else {
-            logger.info("@@@ Calling updateKafkaOffsetDetails")
-            HbaseOffsetManagement.updateKafkaOffsetDetails(tag, layer, kafkaFilteredDF)
-            logger.info("@@@ Updated KafkaOffsetDetails successfully")
-          }
-
-        } else if (layer == "GOLD_PIT") {
-          logger.info("@@@ Calling runBluepcsJsonToGold")
-          BluepcssPMMPlusLoader.runBluepcsJsonToGold(common_conf, bluepcs_conf, tag, jsonRDD, env)
-
-          if (isHdfsSource) {
-            logger.info(s"@@@ HDFS MODE: skipping updateKafkaOffsetDetails for tag=$tag, layer=$layer (HDFS uses file lifecycle for idempotency)")
-          } else if (debugMode) {
-            logger.info(s"@@@ DEBUG MODE: skipping updateKafkaOffsetDetails for tag=$tag, layer=$layer")
-          } else {
-            logger.info("@@@ Kafka offset update for GOLD_PIT is currently disabled in this flow")
-          }
+  private def processTagsInParallel(
+    common_conf: Config,
+    bluepcs_conf: Config,
+    kafkaDF: DataFrame,
+    OffsetDetailsDF: DataFrame,
+    jsonTags: Array[String],
+    layer: String,
+    env: String,
+    sourceType: String,
+    debugMode: Boolean,
+    isHdfsSource: Boolean
+  ): Unit = {
+    val futures = jsonTags.map { tag =>
+      Future {
+        try {
+          processTag(common_conf, bluepcs_conf, kafkaDF, OffsetDetailsDF, tag, layer, env, sourceType, debugMode, isHdfsSource)
+          (tag, None)
+        } catch {
+          case ex: Exception =>
+            logger.error(s"@@@ PARALLEL: Failed to process tag=$tag in layer=$layer", ex)
+            (tag, Some(ex))
         }
       }
-    })
+    }
+
+    val results = Await.result(Future.sequence(futures.toSeq), 60.minutes)
+    val failures = results.collect { case (tag, Some(ex)) => (tag, ex) }
+
+    if (failures.nonEmpty) {
+      logger.error(s"@@@ PARALLEL: ${failures.size}/${jsonTags.length} tags failed for layer=$layer: ${failures.map(_._1).mkString(", ")}")
+      throw new RuntimeException(s"Parallel tag processing failed for ${failures.size} tags: ${failures.map(_._1).mkString(", ")}")
+    }
+
+    logger.info(s"@@@ PARALLEL: All ${jsonTags.length} tags completed successfully for layer=$layer")
+  }
+
+  private def processTag(
+    common_conf: Config,
+    bluepcs_conf: Config,
+    kafkaDF: DataFrame,
+    OffsetDetailsDF: DataFrame,
+    tag: String,
+    layer: String,
+    env: String,
+    sourceType: String,
+    debugMode: Boolean,
+    isHdfsSource: Boolean
+  ): Unit = {
+    val tagStartTime = System.currentTimeMillis()
+    logger.info("@@@ Processing tag: " + tag)
+
+    val kafkaFilteredDF = if (!OffsetDetailsDF.rdd.isEmpty()) {
+      logger.info("@@@ kafkaOffsetDetailsDF is not empty, filtering Kafka data")
+      val kafkaFilteredDF = kafkaDF.join(OffsetDetailsDF, (kafkaDF.col("Partition") === OffsetDetailsDF.col("Partition"))
+        && (kafkaDF.col("Offset") > OffsetDetailsDF.col("Offset")) && (OffsetDetailsDF.col("RowTag") === tag), "inner")
+        .select(kafkaDF("Partition"), kafkaDF("Offset"), kafkaDF("JSONData"))
+      kafkaFilteredDF
+    } else {
+      logger.info("@@@ kafkaOffsetDetailsDF is empty, select full Kafka data")
+      kafkaDF
+    }
+
+    if (!kafkaFilteredDF.rdd.isEmpty()) {
+      val jsonRDD = kafkaFilteredDF.rdd.map { case x: Row => x(2).asInstanceOf[String] }
+
+      if (layer == "RAW_CURPIT") {
+        logger.info("@@@ Calling runBluepcsJsonToRawCur")
+        BluepcssPMMPlusLoader.runBluepcsJsonToRawCur(common_conf, bluepcs_conf, tag, jsonRDD, env)
+
+        if (isHdfsSource) {
+          logger.info(s"@@@ HDFS MODE: skipping updateKafkaOffsetDetails for tag=$tag, layer=$layer (HDFS uses file lifecycle for idempotency)")
+        } else if (debugMode) {
+          logger.info(s"@@@ DEBUG MODE: skipping updateKafkaOffsetDetails for tag=$tag, layer=$layer")
+        } else {
+          logger.info("@@@ Calling updateKafkaOffsetDetails")
+          HbaseOffsetManagement.updateKafkaOffsetDetails(tag, layer, kafkaFilteredDF)
+          logger.info("@@@ Updated KafkaOffsetDetails successfully")
+        }
+
+      } else if (layer == "GOLD_PIT") {
+        logger.info("@@@ Calling runBluepcsJsonToGold")
+        BluepcssPMMPlusLoader.runBluepcsJsonToGold(common_conf, bluepcs_conf, tag, jsonRDD, env)
+
+        if (isHdfsSource) {
+          logger.info(s"@@@ HDFS MODE: skipping updateKafkaOffsetDetails for tag=$tag, layer=$layer (HDFS uses file lifecycle for idempotency)")
+        } else if (debugMode) {
+          logger.info(s"@@@ DEBUG MODE: skipping updateKafkaOffsetDetails for tag=$tag, layer=$layer")
+        } else {
+          logger.info("@@@ Kafka offset update for GOLD_PIT is currently disabled in this flow")
+        }
+      }
+
+      val elapsed = System.currentTimeMillis() - tagStartTime
+      logger.info(s"@@@ Tag $tag completed in ${elapsed}ms for layer=$layer")
+    }
   }
 
   private def elapsedMsSince(startNs: Long): Long =

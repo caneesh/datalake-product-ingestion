@@ -69,7 +69,16 @@ object BluepcssPMMPlusConsumer extends AppTrait {
       // direct access to sys.props on executors.
       spark.conf.set("spark.bluepcs.debug.mode",          effectiveDebugMode.toString)
       spark.conf.set("spark.bluepcs.debug.skipHiveWrite", effectiveSkipHiveWrite.toString)
+
+      // Parallel tag processing - enabled by default for HDFS mode for faster throughput
+      val parallelTagProcessing = sys.props.get("bluepcs.parallel.tags")
+        .orElse(Try(bluepcs_conf.getString("parallel_tag_processing")).toOption)
+        .map(_.toBoolean)
+        .getOrElse(inputMode == "hdfs")  // Default: enabled for HDFS, disabled for Kafka
+      spark.conf.set("spark.bluepcs.parallel.tags", parallelTagProcessing.toString)
+
       logger.info(s"@@@ Debug controls: debugMode=$effectiveDebugMode, debugKafkaSampleSize=$debugKafkaSampleSize, skipHiveWrite=$effectiveSkipHiveWrite")
+      logger.info(s"@@@ Performance controls: parallelTagProcessing=$parallelTagProcessing")
 
       // Route to appropriate input source based on mode
       inputMode match {
@@ -103,17 +112,27 @@ object BluepcssPMMPlusConsumer extends AppTrait {
     logger.info("@@@ Initializing HDFS polling mode")
 
     // Read HDFS polling configuration from bluepcs_conf
+    // HDFS config: spark.conf overrides > param file > defaults
+    // This allows passing via spark-submit --conf spark.bluepcs.hdfs.*=value
+    def getHdfsConf[T](sparkKey: String, paramKey: String, default: T, parse: String => T): T = {
+      Try(parse(spark.conf.get(sparkKey)))
+        .orElse(Try(parse(bluepcs_conf.getString(paramKey))))
+        .getOrElse(default)
+    }
+
     val hdfsConfig = HdfsPollingConfig(
       incomingDir        = bluepcs_conf.getString("hdfs_incoming_dir").replace("$hdfs_env_nm", env),
       processingDir      = bluepcs_conf.getString("hdfs_processing_dir").replace("$hdfs_env_nm", env),
       archiveDir         = bluepcs_conf.getString("hdfs_archive_dir").replace("$hdfs_env_nm", env),
       errorDir           = bluepcs_conf.getString("hdfs_error_dir").replace("$hdfs_env_nm", env),
-      pollIntervalMs     = Try(bluepcs_conf.getString("hdfs_poll_interval_ms").toLong).getOrElse(30000L),
-      maxFilesPerPoll    = Try(bluepcs_conf.getString("hdfs_max_files_per_poll").toInt).getOrElse(10),
+      pollIntervalMs     = getHdfsConf("spark.bluepcs.hdfs.pollIntervalMs", "hdfs_poll_interval_ms", 30000L, _.toLong),
+      maxFilesPerPoll    = getHdfsConf("spark.bluepcs.hdfs.maxFilesPerPoll", "hdfs_max_files_per_poll", 10, _.toInt),
       fileExtension      = Try(bluepcs_conf.getString("hdfs_file_extension")).getOrElse(".json"),
-      fileStabilityMs    = Try(bluepcs_conf.getString("hdfs_file_stability_ms").toLong).getOrElse(5000L),
+      fileStabilityMs    = getHdfsConf("spark.bluepcs.hdfs.fileStabilityMs", "hdfs_file_stability_ms", 5000L, _.toLong),
       recoverStrandedOnStartup = Try(bluepcs_conf.getString("hdfs_recover_stranded").toBoolean).getOrElse(true),
-      maxFileSizeBytes   = Try(bluepcs_conf.getString("hdfs_max_file_size_bytes").toLong).getOrElse(100L * 1024 * 1024)
+      maxFileSizeBytes   = getHdfsConf("spark.bluepcs.hdfs.maxFileSizeBytes", "hdfs_max_file_size_bytes", 100L * 1024 * 1024, _.toLong),
+      parallelFileClaims = getHdfsConf("spark.bluepcs.hdfs.parallelFileClaims", "hdfs_parallel_file_claims", 4, _.toInt),
+      batchProcessing    = getHdfsConf("spark.bluepcs.hdfs.batchProcessing", "hdfs_batch_processing", true, _.toBoolean)
     )
 
     logger.info(s"@@@ HDFS Polling Config: incomingDir=${hdfsConfig.incomingDir}")
@@ -126,6 +145,8 @@ object BluepcssPMMPlusConsumer extends AppTrait {
     logger.info(s"@@@ HDFS Polling Config: fileStabilityMs=${hdfsConfig.fileStabilityMs}")
     logger.info(s"@@@ HDFS Polling Config: recoverStrandedOnStartup=${hdfsConfig.recoverStrandedOnStartup}")
     logger.info(s"@@@ HDFS Polling Config: maxFileSizeBytes=${hdfsConfig.maxFileSizeBytes}")
+    logger.info(s"@@@ HDFS Polling Config: parallelFileClaims=${hdfsConfig.parallelFileClaims}")
+    logger.info(s"@@@ HDFS Polling Config: batchProcessing=${hdfsConfig.batchProcessing}")
 
     // Create the message processor that bridges to existing BluepcssPMMPlusProcessor
     val processor = new BluepcssPMMPlusMessageProcessor(common_conf, bluepcs_conf, env)

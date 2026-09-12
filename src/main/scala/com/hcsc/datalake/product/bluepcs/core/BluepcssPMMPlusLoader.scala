@@ -39,23 +39,58 @@ object BluepcssPMMPlusLoader extends AppTrait with BluepcssTrait {
     sourceView: String,
     flow: StagedSqlFlow,
     hdfsFilepath: String,
-    stageLabel: String
+    stageLabel: String,
+    viewPrefix: String = ""
   ): DataFrame = {
     logger.info(s"@@@ [$stageLabel] Using source view: $sourceView")
 
-    flow.stages.foreach { stage =>
-      val branchSql = readSqlFile(stage.sqlFile, hdfsFilepath)
-      logger.info(s"@@@ [$stageLabel] Executing ${stage.sqlFile} -> ${stage.viewName}")
+    val createdViews = scala.collection.mutable.ArrayBuffer[String]()
 
-      val branchDF = spark.sql(branchSql)
-      branchDF.cache()
-      branchDF.count()
-      branchDF.createOrReplaceTempView(stage.viewName)
+    try {
+      flow.stages.foreach { stage =>
+        var branchSql = readSqlFile(stage.sqlFile, hdfsFilepath)
+        val actualViewName = if (viewPrefix.nonEmpty) s"${viewPrefix}_${stage.viewName}" else stage.viewName
+
+        if (viewPrefix.nonEmpty) {
+          branchSql = replaceViewReferences(branchSql, flow.stages.map(_.viewName), viewPrefix)
+          branchSql = branchSql.replace(sourceView, s"${viewPrefix}_source")
+        }
+
+        logger.info(s"@@@ [$stageLabel] Executing ${stage.sqlFile} -> $actualViewName")
+
+        val branchDF = spark.sql(branchSql)
+        branchDF.cache()
+        branchDF.count()
+        branchDF.createOrReplaceTempView(actualViewName)
+        createdViews += actualViewName
+      }
+
+      var finalSql = readSqlFile(flow.finalSqlFile, hdfsFilepath)
+      if (viewPrefix.nonEmpty) {
+        finalSql = replaceViewReferences(finalSql, flow.stages.map(_.viewName), viewPrefix)
+        finalSql = finalSql.replace(sourceView, s"${viewPrefix}_source")
+      }
+
+      logger.info(s"@@@ [$stageLabel] Executing final assembly SQL -> ${flow.finalSqlFile}")
+      spark.sql(finalSql)
+    } finally {
+      createdViews.foreach { viewName =>
+        try {
+          spark.catalog.dropTempView(viewName)
+        } catch {
+          case _: Exception => // ignore cleanup errors
+        }
+      }
     }
+  }
 
-    val finalSql = readSqlFile(flow.finalSqlFile, hdfsFilepath)
-    logger.info(s"@@@ [$stageLabel] Executing final assembly SQL -> ${flow.finalSqlFile}")
-    spark.sql(finalSql)
+  private def replaceViewReferences(sql: String, viewNames: Seq[String], prefix: String): String = {
+    viewNames.foldLeft(sql) { (currentSql, viewName) =>
+      currentSql
+        .replaceAll(s"(?i)\\bFROM\\s+$viewName\\b", s"FROM ${prefix}_$viewName")
+        .replaceAll(s"(?i)\\bJOIN\\s+$viewName\\b", s"JOIN ${prefix}_$viewName")
+        .replaceAll(s"(?i)\\b$viewName\\.", s"${prefix}_$viewName.")
+    }
   }
 
   private def executeSqlTransform(
@@ -64,16 +99,26 @@ object BluepcssPMMPlusLoader extends AppTrait with BluepcssTrait {
     hdfsFilepath: String
   ): DataFrame = {
     val tagKey = jsonTag.toLowerCase
+    val parallelMode = spark.conf.get("spark.bluepcs.parallel.tags", "false").toBoolean
+    val viewPrefix = if (parallelMode) s"p_${jsonTag}_${Thread.currentThread().getId}" else ""
 
     stagedSqlFlows.get(tagKey) match {
       case Some(flow) =>
-        jsonDF.createOrReplaceTempView(jsonTag)
-        runStagedSqlFlow(
-          sourceView = jsonTag,
-          flow = flow,
-          hdfsFilepath = hdfsFilepath,
-          stageLabel = s"$jsonTag staged"
-        )
+        val sourceViewName = if (viewPrefix.nonEmpty) s"${viewPrefix}_source" else jsonTag
+        jsonDF.createOrReplaceTempView(sourceViewName)
+        try {
+          runStagedSqlFlow(
+            sourceView = jsonTag,
+            flow = flow,
+            hdfsFilepath = hdfsFilepath,
+            stageLabel = s"$jsonTag staged",
+            viewPrefix = viewPrefix
+          )
+        } finally {
+          if (viewPrefix.nonEmpty) {
+            try { spark.catalog.dropTempView(sourceViewName) } catch { case _: Exception => }
+          }
+        }
 
       case None =>
         val sqlQuery = readSqlFile(jsonTag + "_incr_gold_sql", hdfsFilepath)
