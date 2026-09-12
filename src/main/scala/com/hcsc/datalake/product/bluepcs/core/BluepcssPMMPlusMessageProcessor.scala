@@ -4,7 +4,7 @@ import com.typesafe.config.Config
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.DataFrame
 import org.slf4j.{LoggerFactory, MDC}
-import com.hcsc.datalake.product.bluepcs.common.AppTrait
+import com.hcsc.datalake.product.application.common.AppTrait
 
 /**
  * Message processor that bridges HDFS file input to the existing
@@ -24,7 +24,7 @@ class BluepcssPMMPlusMessageProcessor(
    * Process a single message (file content).
    * Used in sequential processing mode.
    */
-  def process(message: InputMessage): Unit = {
+  def process(message: HdfsInputMessage): Unit = {
     val startTime = System.currentTimeMillis()
 
     try {
@@ -63,7 +63,7 @@ class BluepcssPMMPlusMessageProcessor(
    * Process a batch of messages as a single Spark job.
    * Most efficient mode - reduces Spark job overhead.
    */
-  def processBatch(messages: Seq[InputMessage]): Unit = {
+  def processBatch(messages: Seq[HdfsInputMessage]): Unit = {
     if (messages.isEmpty) {
       logger.warn("@@@ processBatch called with empty message list")
       return

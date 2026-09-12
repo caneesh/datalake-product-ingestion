@@ -200,7 +200,7 @@ class HdfsFilePoller(
     try {
       // Build batch message with all file contents
       val batchMessages = batchPayload.map { case (path, content, claimedAt) =>
-        InputMessage(
+        HdfsInputMessage(
           messageId = generateMessageId(path),
           payload = content,
           sourceFile = path.toString,
@@ -221,7 +221,7 @@ class HdfsFilePoller(
         // Fallback: process remaining files individually to isolate failures
         batchPayload.foreach { case (path, content, claimedAt) =>
           try {
-            val message = InputMessage(
+            val message = HdfsInputMessage(
               messageId = generateMessageId(path),
               payload = content,
               sourceFile = path.toString,
@@ -319,7 +319,7 @@ class HdfsFilePoller(
 
         try {
           val payload = readWholeFile(processingFile)
-          val message = InputMessage(
+          val message = HdfsInputMessage(
             messageId = generateMessageId(processingFile),
             payload = payload,
             sourceFile = processingFile.toString,
@@ -508,7 +508,7 @@ class HdfsFilePoller(
   }
 }
 
-case class InputMessage(
+case class HdfsInputMessage(
   messageId: String,
   payload: String,
   sourceFile: String,

@@ -9,7 +9,9 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Row, SaveMode}
 import org.apache.spark.sql.functions.col
 import com.typesafe.config.Config
-import com.hcsc.datalake.product.bluepcs.common.{AppTrait, BluepcssTrait, HbaseOffsetManagement}
+import com.hcsc.datalake.product.application.common.AppTrait
+import com.hcsc.datalake.product.bluepcs.common.BluepcssTrait
+import com.hcsc.datalake.product.bluepcs.hbase.HbaseOffsetManagement
 
 object BluepcssPMMPlusProcessor extends AppTrait with BluepcssTrait {
   import spark.sqlContext.implicits._

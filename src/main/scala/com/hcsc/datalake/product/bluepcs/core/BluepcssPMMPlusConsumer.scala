@@ -9,8 +9,9 @@ import java.util.Calendar
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.streaming.kafka010.{ConsumerStrategies, KafkaUtils, LocationStrategies}
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.hcsc.datalake.product.bluepcs.common.{AppTrait, HbaseOffsetManagement}
-import com.hcsc.bluepcs.common.BridgeMessageResolver
+import com.hcsc.datalake.product.application.common.AppTrait
+import com.hcsc.datalake.product.bluepcs.hbase.HbaseOffsetManagement
+import com.hcsc.datalake.product.bluepcs.common.BridgeMessageResolver
 
 object BluepcssPMMPlusConsumer extends AppTrait {
   import spark.sqlContext.implicits._
