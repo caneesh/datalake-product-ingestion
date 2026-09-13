@@ -4,7 +4,6 @@ import com.typesafe.config.Config
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.DataFrame
 import org.slf4j.{LoggerFactory, MDC}
-import com.hcsc.datalake.product.application.common.AppTrait
 
 /**
  * Message processor that bridges HDFS file input to the existing
@@ -18,7 +17,7 @@ class BluepcssPMMPlusMessageProcessor(
   env: String
 ) extends AppTrait {
 
-  // Uses logger from AppTrait
+  private val logger = LoggerFactory.getLogger(getClass)
 
   /**
    * Process a single message (file content).
@@ -34,11 +33,6 @@ class BluepcssPMMPlusMessageProcessor(
 
       logger.info(s"@@@ Processing HDFS message: messageId=${message.messageId}, sourceFile=${message.sourceFile}")
       logger.info(s"@@@ DEBUG: message.payload.length = ${message.payload.length}")
-      if (message.payload.length > 0) {
-        logger.info(s"@@@ DEBUG: message.payload first 500 chars = ${message.payload.take(500)}")
-      } else {
-        logger.error("@@@ ERROR: message.payload is EMPTY!")
-      }
 
       val jsonRDD: RDD[(Int, Int, String)] = spark.sparkContext.parallelize(
         Seq((0, 0, message.payload))
