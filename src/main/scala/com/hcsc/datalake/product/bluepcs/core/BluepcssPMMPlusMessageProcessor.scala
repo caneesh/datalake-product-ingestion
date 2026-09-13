@@ -33,10 +33,17 @@ class BluepcssPMMPlusMessageProcessor(
       MDC.put("hdfsFileSizeBytes", message.payload.length.toString)
 
       logger.info(s"@@@ Processing HDFS message: messageId=${message.messageId}, sourceFile=${message.sourceFile}")
+      logger.info(s"@@@ DEBUG: message.payload.length = ${message.payload.length}")
+      if (message.payload.length > 0) {
+        logger.info(s"@@@ DEBUG: message.payload first 500 chars = ${message.payload.take(500)}")
+      } else {
+        logger.error("@@@ ERROR: message.payload is EMPTY!")
+      }
 
       val jsonRDD: RDD[(Int, Int, String)] = spark.sparkContext.parallelize(
         Seq((0, 0, message.payload))
       )
+      logger.info(s"@@@ DEBUG: jsonRDD created, count = ${jsonRDD.count()}")
 
       val emptyOffsetDF = createEmptyOffsetDF()
 
